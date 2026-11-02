@@ -13,14 +13,13 @@
   const fine = matchMedia('(hover: hover) and (pointer: fine)').matches;
   const desktop = matchMedia('(min-width: 901px)');
   const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
-  const lerp = (a, b, t) => a + (b - a) * t;
   const easeInOut = t => -(Math.cos(Math.PI * t) - 1) / 2;
 
   let vw = innerWidth;
   let vh = innerHeight;
 
   /* ---------------------------------------------------------
-     Drips (preloader + footer)
+     Drips (footer)
      --------------------------------------------------------- */
   function buildDrips(svg, o) {
     if (!svg) return;
@@ -105,7 +104,7 @@
     const PALETTE = ['#f28a2e', '#1fa3ad', '#f6f1e8', '#46cdd5', '#ffc94a', '#f28a2e', '#0e6c76', '#1fa3ad'];
     let W = 0, H = 0, dpr = 1;
     let strokes = [];
-    let painted = 0, pIdx = 0, nextAuto = Infinity, last = 0, raf = 0;
+    let painted = 0, pIdx = 0, last = 0, raf = 0;
     let running = false, visible = true;
     let mouseStroke = null, lastMouse = 0, mouseColor = PALETTE[0];
 
@@ -206,10 +205,6 @@
       raf = requestAnimationFrame(frame);
       const dt = Math.min(0.05, (now - last) / 1000 || 0.016);
       last = now;
-      if (now > nextAuto) {
-        auto();
-        nextAuto = now + 1200 + Math.random() * 1200;
-      }
       for (const s of strokes) {
         if (s.delay > 0) { s.delay -= dt; continue; }
         const p0 = s.t;
@@ -222,6 +217,7 @@
         if (s.t >= 1) s.done = true;
       }
       strokes = strokes.filter(s => !s.done);
+      if (!strokes.length) pause();
     }
 
     function play() {
@@ -249,15 +245,14 @@
       auto({ color: '#f6f1e8', y: 0.84, fromLeft: true, len: 0.9, width: small ? 30 : 46, speed: 2300, delay: 0.55 });
       auto({ color: '#ffc94a', y: 0.14, fromLeft: true, len: 0.8, width: small ? 40 : 64, speed: 2000, delay: 0.85 });
       painted = 4;
-      nextAuto = performance.now() + 2200;
       play();
     }
 
     new IntersectionObserver(([e]) => {
       visible = e.isIntersecting;
-      if (visible && nextAuto !== Infinity) play(); else pause();
+      if (visible && strokes.length) play(); else pause();
     }).observe(hero);
-    document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); else if (nextAuto !== Infinity) play(); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); else if (strokes.length) play(); });
 
     if (fine && !reduce) {
       hero.addEventListener('pointermove', e => {
@@ -279,45 +274,20 @@
   })();
 
   /* ---------------------------------------------------------
-     Preloader -> page ready
+     Page ready (once fonts are in, so the headline wipe uses them)
      --------------------------------------------------------- */
-  const pre = $('.preloader');
   let started = false;
   function ready() {
     if (started) return;
     started = true;
-    root.classList.remove('is-loading');
     body.classList.add('is-ready');
     heroPaint && heroPaint.start();
   }
-  if (pre && !reduce) {
-    root.classList.add('is-loading');
-    let seen = false;
-    try { seen = sessionStorage.getItem('hp-seen') === '1'; } catch (e) { /* storage blocked */ }
-    buildDrips($('.drips--pre'), { seed: 3, base: 4, count: 14, minW: 14, maxW: 34, minL: 30, maxL: 130 });
-    const t0 = performance.now();
-    const minTime = seen ? 300 : 1350;
-    let out = false;
-    const go = () => {
-      if (out) return;
-      out = true;
-      setTimeout(() => {
-        pre.classList.add('is-out');
-        setTimeout(ready, 420);
-        setTimeout(() => pre.classList.add('is-gone'), 1400);
-        try { sessionStorage.setItem('hp-seen', '1'); } catch (e) { /* ignore */ }
-      }, Math.max(0, minTime - (performance.now() - t0)));
-    };
-    if (document.readyState === 'complete') go();
-    else addEventListener('load', go, { once: true });
-    setTimeout(go, 3200);
-  } else {
-    if (pre) pre.classList.add('is-gone');
-    ready();
-  }
+  const fontsReady = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
+  Promise.race([fontsReady, new Promise(r => setTimeout(r, 800))]).then(ready);
 
   /* ---------------------------------------------------------
-     Header, menu, progress, action bar, active nav
+     Header + mobile menu
      --------------------------------------------------------- */
   const header = $('.header');
   const burger = $('.burger');
@@ -329,62 +299,42 @@
     menu.setAttribute('aria-hidden', String(!open));
     root.style.overflow = open ? 'hidden' : '';
   };
-  burger.addEventListener('click', () => setMenu(!body.classList.contains('menu-open')));
-  $$('a', menu).forEach(a => a.addEventListener('click', () => setMenu(false)));
-  addEventListener('keydown', e => { if (e.key === 'Escape' && body.classList.contains('menu-open')) setMenu(false); });
+  if (burger && menu) {
+    burger.addEventListener('click', () => setMenu(!body.classList.contains('menu-open')));
+    $$('a', menu).forEach(a => a.addEventListener('click', () => setMenu(false)));
+    addEventListener('keydown', e => { if (e.key === 'Escape' && body.classList.contains('menu-open')) setMenu(false); });
+  }
 
-  const navLinks = $$('.nav a');
-  const sectIO = new IntersectionObserver(entries => {
-    entries.forEach(e => {
-      if (!e.isIntersecting) return;
-      navLinks.forEach(a => a.classList.toggle('is-active', a.getAttribute('href') === `#${e.target.id}`));
-    });
-  }, { rootMargin: '-45% 0px -50% 0px' });
-  ['services', 'colour-lab', 'work', 'area'].forEach(id => { const s = document.getElementById(id); s && sectIO.observe(s); });
-
-  /* fit the badge text exactly around its circle */
+  /* fit the hero badge text exactly around its circle */
   const fitBadge = () => {
     const t = $('.badge-ring text');
     if (!t || !t.getComputedTextLength) return;
     t.style.letterSpacing = '0px';
-    const n = t.textContent.length;
-    const extra = (2 * Math.PI * 78 - t.getComputedTextLength()) / n;
+    const extra = (2 * Math.PI * 78 - t.getComputedTextLength()) / t.textContent.length;
     t.style.letterSpacing = `${extra.toFixed(2)}px`;
   };
   fitBadge();
 
   /* ---------------------------------------------------------
-     Marquee
+     Marquee (home)
      --------------------------------------------------------- */
   const mqs = $$('.mq').map(el => {
     const tr = $('.mq-track', el);
     tr.innerHTML = tr.innerHTML.repeat(3);
-    return { el, tr, speed: parseFloat(el.dataset.speed) || 1, x: 0, w: 0 };
+    return { tr, speed: parseFloat(el.dataset.speed) || 1, x: 0, w: 0 };
   });
   const measureMq = () => mqs.forEach(m => { m.w = m.tr.scrollWidth / 3; });
   measureMq();
 
   /* ---------------------------------------------------------
-     Roller section
-     --------------------------------------------------------- */
-  const roller = $('.roller');
-  const rSticky = $('.roller-sticky');
-  const rCyl = $('.rl-cyl');
-  const rHint = $('.rl-hint');
-  const rPct = $('.rl-pct');
-  const rMeter = $('.rl-meter');
-  let rCur = 0, rTarget = 0, rLastPct = -1;
-
-  /* ---------------------------------------------------------
-     Services panels
+     Service panels (home)
      --------------------------------------------------------- */
   const panels = $$('.svc');
-  const measurePanels = () => panels.forEach(p => p.style.setProperty('--bh', `${$('.svc-body', p).offsetHeight}px`));
-  const openPanel = p => {
-    panels.forEach(x => x.classList.toggle('is-open', x === p));
-    const c = $('.cursor');
-    if (c) c.classList.remove('is-label');
-  };
+  const measurePanels = () => panels.forEach(p => {
+    const b = $('.svc-body', p);
+    if (b) p.style.setProperty('--bh', `${b.offsetHeight}px`);
+  });
+  const openPanel = p => panels.forEach(x => x.classList.toggle('is-open', x === p));
   let hoverT = 0;
   panels.forEach(p => {
     p.addEventListener('mouseenter', () => {
@@ -399,21 +349,23 @@
   measurePanels();
 
   /* ---------------------------------------------------------
-     Colour lab
+     Colour Lab
      --------------------------------------------------------- */
-  const lab = (() => {
+  (() => {
     const room = $('.room');
-    if (!room) return null;
+    if (!room) return;
     const wallBase = $('#wallBase', room);
     const wallNew = $('#wallNew', room);
     const rcs = $$('.rc', room);
     const rollerG = $('#labRoller', room);
     const sws = $$('.sw');
+    const stage = $('.lab-stage');
+    const cta = $('.lab-cta');
     const nameEl = $('.lab-name'), hexEl = $('.lab-hex'), chip = $('.lab-chip'), status = $('.lab-status');
     const COLS = 6, WH = 470, CW = 167;
-    let busy = false, queued = null, touched = false, chosen = null;
+    let busy = false, queued = null, touched = false;
 
-    function setStatus(t, cls) { status.textContent = t; status.className = `lab-status ${cls || ''}`; }
+    const setStatus = (t, cls) => { status.textContent = t; status.className = `lab-status ${cls || ''}`; };
 
     function roll(color) {
       if (busy) { queued = color; return; }
@@ -455,38 +407,34 @@
 
     function select(btn, user = true) {
       if (user) touched = true;
-      sws.forEach(s => s.setAttribute('aria-checked', String(s === btn)));
+      sws.forEach(x => x.setAttribute('aria-checked', String(x === btn)));
       const c = getComputedStyle(btn).getPropertyValue('--c').trim();
       nameEl.textContent = btn.dataset.name;
       hexEl.textContent = c.toUpperCase();
       chip.style.setProperty('--c', c);
-      chosen = btn.dataset.name;
+      if (cta && touched) cta.href = `contact.html?type=Interior&colour=${encodeURIComponent(btn.dataset.name)}`;
       roll(c);
     }
-    sws.forEach(s => s.addEventListener('click', () => select(s)));
-    $('.lab-stage').addEventListener('click', () => {
-      const i = sws.findIndex(s => s.getAttribute('aria-checked') === 'true');
+    sws.forEach(x => x.addEventListener('click', () => select(x)));
+    stage.addEventListener('click', () => {
+      const i = sws.findIndex(x => x.getAttribute('aria-checked') === 'true');
       select(sws[(i + 1) % sws.length]);
     });
-    $('.lab-stage').setAttribute('data-cursor', 'Repaint');
-
     $$('.tt').forEach(b => b.addEventListener('click', () => {
       $$('.tt').forEach(x => { x.classList.toggle('is-on', x === b); x.setAttribute('aria-pressed', String(x === b)); });
       room.style.setProperty('--trim', b.dataset.trim);
     }));
 
-    // auto-demo the first time the lab scrolls into view
+    // one demo roll the first time the room is on screen
     new IntersectionObserver(([e], obs) => {
       if (!e.isIntersecting) return;
       obs.disconnect();
       setTimeout(() => { if (!touched) select(sws[0], false); }, 700);
-    }, { threshold: 0.45 }).observe($('.lab-stage'));
-
-    return { get chosen() { return touched ? chosen : null; } };
+    }, { threshold: 0.45 }).observe(stage);
   })();
 
   /* ---------------------------------------------------------
-     Process line
+     Process line + quote words (scroll-linked)
      --------------------------------------------------------- */
   const proc = $('.proc');
   const procPaths = $$('.proc-line path').map(p => {
@@ -496,15 +444,12 @@
     return { p, len };
   });
   const steps = $$('.step');
-
-  /* ---------------------------------------------------------
-     Quote words
-     --------------------------------------------------------- */
+  let procMax = 0;
   const quote = $('.quote-text');
   const qWords = $$('.quote-text span');
 
   /* ---------------------------------------------------------
-     Gallery filters + lightbox
+     Gallery filters + lightbox (work page)
      --------------------------------------------------------- */
   const shots = $$('.shot');
   $$('.flt').forEach(b => b.addEventListener('click', () => {
@@ -521,58 +466,59 @@
   }));
 
   const lb = $('.lightbox');
-  const lbImg = $('.lb-fig img', lb), lbCap = $('.lb-fig figcaption', lb), lbCount = $('.lb-count', lb);
-  let lbList = [], lbIdx = 0, lbReturn = null;
-  function lbShow(i) {
-    lbIdx = (i + lbList.length) % lbList.length;
-    const s = lbList[lbIdx];
-    const img = $('img', s);
-    lbImg.src = img.currentSrc || img.src;
-    lbImg.alt = img.alt;
-    lbCap.textContent = $('figcaption', s).textContent;
-    lbCount.textContent = `${String(lbIdx + 1).padStart(2, '0')} / ${String(lbList.length).padStart(2, '0')}`;
-    lbImg.style.animation = 'none'; void lbImg.offsetWidth; lbImg.style.animation = '';
+  if (lb && shots.length) {
+    const lbImg = $('.lb-fig img', lb), lbCap = $('.lb-fig figcaption', lb), lbCount = $('.lb-count', lb);
+    let lbList = [], lbIdx = 0, lbReturn = null, sx = null;
+    const lbShow = i => {
+      lbIdx = (i + lbList.length) % lbList.length;
+      const s = lbList[lbIdx];
+      const img = $('img', s);
+      lbImg.src = img.currentSrc || img.src;
+      lbImg.alt = img.alt;
+      lbCap.textContent = $('figcaption', s).textContent;
+      lbCount.textContent = `${String(lbIdx + 1).padStart(2, '0')} / ${String(lbList.length).padStart(2, '0')}`;
+      lbImg.style.animation = 'none'; void lbImg.offsetWidth; lbImg.style.animation = '';
+    };
+    const lbOpen = s => {
+      lbList = shots.filter(x => !x.classList.contains('is-hidden'));
+      lbReturn = document.activeElement;
+      lb.hidden = false;
+      root.style.overflow = 'hidden';
+      lbShow(lbList.indexOf(s));
+      $('.lb-close', lb).focus();
+    };
+    const lbClose = () => {
+      lb.hidden = true;
+      root.style.overflow = '';
+      lbReturn && lbReturn.focus();
+    };
+    shots.forEach(s => $('button', s).addEventListener('click', () => lbOpen(s)));
+    $('.lb-close', lb).addEventListener('click', lbClose);
+    $('.lb-prev', lb).addEventListener('click', () => lbShow(lbIdx - 1));
+    $('.lb-next', lb).addEventListener('click', () => lbShow(lbIdx + 1));
+    lb.addEventListener('click', e => { if (e.target === lb) lbClose(); });
+    addEventListener('keydown', e => {
+      if (lb.hidden) return;
+      if (e.key === 'Escape') lbClose();
+      if (e.key === 'ArrowLeft') lbShow(lbIdx - 1);
+      if (e.key === 'ArrowRight') lbShow(lbIdx + 1);
+      if (e.key === 'Tab') {
+        const f = $$('button', lb);
+        const i = f.indexOf(document.activeElement);
+        e.preventDefault();
+        f[(i + (e.shiftKey ? -1 : 1) + f.length) % f.length].focus();
+      }
+    });
+    lb.addEventListener('pointerdown', e => { sx = e.clientX; });
+    lb.addEventListener('pointerup', e => {
+      if (sx == null) return;
+      const dx = e.clientX - sx; sx = null;
+      if (Math.abs(dx) > 50) lbShow(lbIdx + (dx < 0 ? 1 : -1));
+    });
   }
-  function lbOpen(s) {
-    lbList = shots.filter(x => !x.classList.contains('is-hidden'));
-    lbReturn = document.activeElement;
-    lb.hidden = false;
-    root.style.overflow = 'hidden';
-    lbShow(lbList.indexOf(s));
-    $('.lb-close', lb).focus();
-  }
-  function lbClose() {
-    lb.hidden = true;
-    root.style.overflow = '';
-    lbReturn && lbReturn.focus();
-  }
-  shots.forEach(s => $('button', s).addEventListener('click', () => lbOpen(s)));
-  $('.lb-close', lb).addEventListener('click', lbClose);
-  $('.lb-prev', lb).addEventListener('click', () => lbShow(lbIdx - 1));
-  $('.lb-next', lb).addEventListener('click', () => lbShow(lbIdx + 1));
-  lb.addEventListener('click', e => { if (e.target === lb) lbClose(); });
-  addEventListener('keydown', e => {
-    if (lb.hidden) return;
-    if (e.key === 'Escape') lbClose();
-    if (e.key === 'ArrowLeft') lbShow(lbIdx - 1);
-    if (e.key === 'ArrowRight') lbShow(lbIdx + 1);
-    if (e.key === 'Tab') {
-      const f = $$('button', lb);
-      const i = f.indexOf(document.activeElement);
-      e.preventDefault();
-      f[(i + (e.shiftKey ? -1 : 1) + f.length) % f.length].focus();
-    }
-  });
-  let sx = null;
-  lb.addEventListener('pointerdown', e => { sx = e.clientX; });
-  lb.addEventListener('pointerup', e => {
-    if (sx == null) return;
-    const dx = e.clientX - sx; sx = null;
-    if (Math.abs(dx) > 50) lbShow(lbIdx + (dx < 0 ? 1 : -1));
-  });
 
   /* ---------------------------------------------------------
-     Map <-> town chips
+     Map <-> town chips (about page)
      --------------------------------------------------------- */
   const pins = $$('.map .pin');
   const towns = $$('.towns li');
@@ -586,187 +532,89 @@
   });
 
   /* ---------------------------------------------------------
-     Estimate form -> prefilled email
+     Estimate form -> prefilled email (contact page)
      --------------------------------------------------------- */
   const form = $('.est-form');
-  const err = $('.form-err', form);
-  const done = $('.form-done', form);
-  $$('.svc-link').forEach(a => a.addEventListener('click', () => {
-    const box = $(`input[name="type"][value="${a.dataset.service}"]`, form);
-    if (box) box.checked = true;
-  }));
-  $('.lab-cta').addEventListener('click', () => {
-    const c = lab && lab.chosen;
-    const ta = $('textarea[name="details"]', form);
-    if (c && !ta.value.includes(c)) ta.value = `${ta.value ? `${ta.value}\n` : ''}Colour Lab pick: ${c}`.trim();
-    const box = $('input[name="type"][value="Interior"]', form);
-    if (box) box.checked = true;
-  });
-  form.addEventListener('submit', e => {
-    e.preventDefault();
-    const fd = new FormData(form);
-    const v = k => String(fd.get(k) || '').trim();
-    const name = v('name'), phone = v('phone'), email = v('email');
-    if (!name || (!phone && !email)) {
-      err.hidden = false;
-      (name ? $('input[name="phone"]', form) : $('input[name="name"]', form)).focus();
-      return;
+  if (form) {
+    const err = $('.form-err', form);
+    const done = $('.form-done', form);
+
+    // prefill from links like contact.html?type=Exterior&colour=Ojibway%20Sage
+    const q = new URLSearchParams(location.search);
+    const type = q.get('type');
+    if (type) {
+      const box = $$('input[name="type"]', form).find(x => x.value === type);
+      if (box) box.checked = true;
     }
-    err.hidden = true;
-    const types = fd.getAll('type').join(', ') || 'Not specified';
-    const lines = [
-      'Hi Sam,', '', "I'd like a free painting estimate.", '',
-      `What: ${types}`,
-      `Size: ${v('size') || 'Not specified'}`,
-      `Timing: ${v('when') || 'Not specified'}`,
-      `Town: ${v('town') || 'Not specified'}`, '',
-      `Details: ${v('details') || 'None'}`, '',
-      `Name: ${name}`,
-      `Phone: ${phone || 'Not given'}`,
-      `Email: ${email || 'Not given'}`,
-    ];
-    const subject = `Free estimate request: ${types} (${name})`;
-    done.hidden = false;
-    window.location.href = `mailto:happypaintingbysam@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(lines.join('\n'))}`;
-  });
-  $('.form-again', form).addEventListener('click', () => { done.hidden = true; });
+    const colour = q.get('colour');
+    if (colour) $('textarea[name="details"]', form).value = `Colour Lab pick: ${colour.slice(0, 60)}`;
 
-  /* ---------------------------------------------------------
-     Cursor + magnetic buttons (fine pointers only)
-     --------------------------------------------------------- */
-  const cursor = $('.cursor');
-  const cDot = $('.cursor-dot'), cRing = $('.cursor-ring'), cLabel = $('.cursor-label');
-  let mx = -100, my = -100, rx = -100, ry = -100;
-  const useCursor = fine && !reduce && cursor;
-  if (useCursor) {
-    addEventListener('pointermove', e => {
-      mx = e.clientX; my = e.clientY;
-      cDot.style.transform = `translate3d(${mx}px, ${my}px, 0)`;
-      cursor.classList.remove('is-hidden');
-    }, { passive: true });
-    document.addEventListener('pointerleave', () => cursor.classList.add('is-hidden'));
-    document.addEventListener('pointerover', e => {
-      const t = e.target;
-      let lab = t.closest('[data-cursor]');
-      if (lab && lab.classList.contains('svc') && (lab.classList.contains('is-open') || t.closest('a'))) lab = null;
-      const link = t.closest('a, button, label, input, select, textarea');
-      cursor.classList.toggle('is-label', !!lab);
-      cLabel.textContent = lab ? lab.dataset.cursor : '';
-      cursor.classList.toggle('is-link', !lab && !!link);
-      cursor.classList.toggle('is-paint', !lab && !link && !!t.closest('.hero'));
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const v = k => String(fd.get(k) || '').trim();
+      const name = v('name'), phone = v('phone'), email = v('email');
+      if (!name || (!phone && !email)) {
+        err.hidden = false;
+        (name ? $('input[name="phone"]', form) : $('input[name="name"]', form)).focus();
+        return;
+      }
+      err.hidden = true;
+      const types = fd.getAll('type').join(', ') || 'Not specified';
+      const lines = [
+        'Hi Sam,', '', "I'd like a free painting estimate.", '',
+        `What: ${types}`,
+        `Size: ${v('size') || 'Not specified'}`,
+        `Timing: ${v('when') || 'Not specified'}`,
+        `Town: ${v('town') || 'Not specified'}`, '',
+        `Details: ${v('details') || 'None'}`, '',
+        `Name: ${name}`,
+        `Phone: ${phone || 'Not given'}`,
+        `Email: ${email || 'Not given'}`,
+      ];
+      const subject = `Free estimate request: ${types} (${name})`;
+      done.hidden = false;
+      window.location.href = `mailto:happypaintingbysam@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(lines.join('\n'))}`;
     });
-
-    $$('[data-magnetic]').forEach(el => {
-      el.addEventListener('pointermove', e => {
-        const r = el.getBoundingClientRect();
-        const x = (e.clientX - r.left - r.width / 2) * 0.28;
-        const y = (e.clientY - r.top - r.height / 2) * 0.38;
-        el.style.transform = `translate(${x}px, ${y}px)`;
-      });
-      el.addEventListener('pointerleave', () => {
-        el.style.transition = 'transform .6s cubic-bezier(.34,1.56,.64,1), color .35s, box-shadow .35s';
-        el.style.transform = '';
-        setTimeout(() => { el.style.transition = ''; }, 600);
-      });
-    });
-  }
-
-  /* hero card parallax */
-  const cards = $$('.hero-art [data-depth]');
-  let pmx = 0, pmy = 0, smx = 0, smy = 0;
-  if (fine && !reduce) {
-    $('.hero').addEventListener('pointermove', e => {
-      pmx = e.clientX / vw - 0.5;
-      pmy = e.clientY / vh - 0.5;
-    }, { passive: true });
+    $('.form-again', form).addEventListener('click', () => { done.hidden = true; });
   }
 
   /* ---------------------------------------------------------
      Main loop
      --------------------------------------------------------- */
-  let sy = scrollY, lastSy = sy, vel = 0, dir = 1, lastT = performance.now(), lastHeaderY = sy;
-  const progress = $('.progress');
-  const heroEl = $('.hero');
+  let sy = scrollY, lastT = performance.now(), lastHeaderY = sy;
+  const firstSection = $('main > section');
 
   function loop(now) {
     requestAnimationFrame(loop);
     const dt = Math.min(0.05, (now - lastT) / 1000 || 0.016);
     lastT = now;
     sy = scrollY;
-    const dy = sy - lastSy;
-    lastSy = sy;
-    if (dy) dir = dy > 0 ? 1 : -1;
-    vel = lerp(vel, dy / dt, 0.12);
 
-    // header + progress + action bar
+    // header + action bar
     header.classList.toggle('is-scrolled', sy > 30);
     if (Math.abs(sy - lastHeaderY) > 8) {
       header.classList.toggle('is-hidden', sy > lastHeaderY && sy > 700 && !body.classList.contains('menu-open'));
       lastHeaderY = sy;
     }
-    const docH = root.scrollHeight - vh;
-    progress.style.setProperty('--p', docH > 0 ? (sy / docH).toFixed(4) : 0);
-    body.classList.toggle('show-bar', sy > heroEl.offsetHeight * 0.6);
-
-    // cursor ring
-    if (useCursor) {
-      rx = lerp(rx, mx, 0.2); ry = lerp(ry, my, 0.2);
-      cRing.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
-    }
-
-    // hero cards
-    if (!reduce && sy < vh * 1.2) {
-      smx = lerp(smx, pmx, 0.06); smy = lerp(smy, pmy, 0.06);
-      const t = now / 1000;
-      cards.forEach((c, i) => {
-        const d = parseFloat(c.dataset.depth);
-        const x = smx * d * -28;
-        const y = smy * d * -22 + Math.sin(t * 0.9 + i * 1.7) * 6 - sy * d * 0.07;
-        c.style.transform = `translate3d(${x.toFixed(2)}px, ${y.toFixed(2)}px, 0) rotate(var(--r, 0deg))`;
-      });
-    }
+    body.classList.toggle('show-bar', sy > (firstSection ? firstSection.offsetHeight * 0.6 : 200));
 
     // marquee
     if (!reduce) {
-      const boost = Math.min(Math.abs(vel) * 0.25, 900);
-      const skew = clamp(-vel * 0.004, -7, 7);
       mqs.forEach(m => {
-        m.x -= m.speed * dir * (70 + boost) * dt;
-        if (m.w) {
-          if (m.x <= -m.w) m.x += m.w;
-          if (m.x > 0) m.x -= m.w;
-        }
-        m.tr.style.transform = `translate3d(${m.x.toFixed(2)}px,0,0) skewX(${skew.toFixed(2)}deg)`;
+        m.x -= m.speed * 40 * dt;
+        if (m.w && m.x <= -m.w) m.x += m.w;
+        m.tr.style.transform = `translate3d(${m.x.toFixed(2)}px,0,0)`;
       });
-    }
-
-    // roller
-    if (roller && !reduce) {
-      const r = roller.getBoundingClientRect();
-      if (r.bottom > -50 && r.top < vh + 50) {
-        rTarget = clamp(-r.top / (r.height - vh));
-        rCur = Math.abs(rTarget - rCur) < 0.0005 ? rTarget : lerp(rCur, rTarget, 0.16);
-        const W = rSticky.clientWidth;
-        const cw = rCyl.offsetWidth;
-        const q = clamp((rCur - 0.05) / 0.8);
-        const x = lerp(cw * 0.5, W + cw, q);
-        rSticky.style.setProperty('--x', `${Math.min(x, W + 2).toFixed(1)}px`);
-        rSticky.style.setProperty('--rx', `${x.toFixed(1)}px`);
-        rSticky.style.setProperty('--spin', `${(x * 0.9).toFixed(1)}px`);
-        const pct = Math.round(clamp(x / W) * 100);
-        if (pct !== rLastPct) { rPct.textContent = `${pct}%`; rLastPct = pct; }
-        rMeter.style.setProperty('--pp', clamp(x / W).toFixed(3));
-        rHint.style.opacity = String(1 - clamp(rCur / 0.05));
-      }
     }
 
     // process line
     if (proc) {
       const r = proc.getBoundingClientRect();
       if (r.top < vh && r.bottom > 0) {
-        const p = clamp((vh * 0.8 - r.top) / (r.height * 0.85));
+        const p = procMax = Math.max(procMax, clamp((vh * 0.8 - r.top) / (r.height * 0.85)));
         procPaths.forEach(o => { o.p.style.strokeDashoffset = (o.len * (1 - p)).toFixed(1); });
-        steps.forEach((s, i) => s.classList.toggle('is-hit', p > [0.04, 0.42, 0.8][i]));
+        steps.forEach((s, i) => { if (p > [0.04, 0.42, 0.8][i]) s.classList.add('is-hit'); });
       }
     }
 
@@ -774,9 +622,8 @@
     if (quote) {
       const r = quote.getBoundingClientRect();
       if (r.top < vh && r.bottom > 0) {
-        const p = clamp((vh * 0.82 - r.top) / (vh * 0.5));
-        const n = Math.round(p * qWords.length);
-        qWords.forEach((w, i) => w.classList.toggle('lit', i < n));
+        const n = Math.round(clamp((vh * 0.82 - r.top) / (vh * 0.5)) * qWords.length);
+        qWords.forEach((w, i) => { if (i < n) w.classList.add('lit'); });
       }
     }
   }
