@@ -20,7 +20,7 @@
   let vh = innerHeight;
 
   /* ---------------------------------------------------------
-     Drips (preloader + footer)
+     Drips (footer)
      --------------------------------------------------------- */
   function buildDrips(svg, o) {
     if (!svg) return;
@@ -105,7 +105,7 @@
     const PALETTE = ['#f28a2e', '#1fa3ad', '#f6f1e8', '#46cdd5', '#ffc94a', '#f28a2e', '#0e6c76', '#1fa3ad'];
     let W = 0, H = 0, dpr = 1;
     let strokes = [];
-    let painted = 0, pIdx = 0, nextAuto = Infinity, last = 0, raf = 0;
+    let painted = 0, pIdx = 0, last = 0, raf = 0;
     let running = false, visible = true;
     let mouseStroke = null, lastMouse = 0, mouseColor = PALETTE[0];
 
@@ -206,10 +206,6 @@
       raf = requestAnimationFrame(frame);
       const dt = Math.min(0.05, (now - last) / 1000 || 0.016);
       last = now;
-      if (now > nextAuto) {
-        auto();
-        nextAuto = now + 1200 + Math.random() * 1200;
-      }
       for (const s of strokes) {
         if (s.delay > 0) { s.delay -= dt; continue; }
         const p0 = s.t;
@@ -222,6 +218,7 @@
         if (s.t >= 1) s.done = true;
       }
       strokes = strokes.filter(s => !s.done);
+      if (!strokes.length) pause();
     }
 
     function play() {
@@ -249,15 +246,14 @@
       auto({ color: '#f6f1e8', y: 0.84, fromLeft: true, len: 0.9, width: small ? 30 : 46, speed: 2300, delay: 0.55 });
       auto({ color: '#ffc94a', y: 0.14, fromLeft: true, len: 0.8, width: small ? 40 : 64, speed: 2000, delay: 0.85 });
       painted = 4;
-      nextAuto = performance.now() + 2200;
       play();
     }
 
     new IntersectionObserver(([e]) => {
       visible = e.isIntersecting;
-      if (visible && nextAuto !== Infinity) play(); else pause();
+      if (visible && strokes.length) play(); else pause();
     }).observe(hero);
-    document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); else if (nextAuto !== Infinity) play(); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); else if (strokes.length) play(); });
 
     if (fine && !reduce) {
       hero.addEventListener('pointermove', e => {
@@ -279,45 +275,20 @@
   })();
 
   /* ---------------------------------------------------------
-     Preloader -> page ready
+     Page ready (once fonts are in, so the headline wipe uses them)
      --------------------------------------------------------- */
-  const pre = $('.preloader');
   let started = false;
   function ready() {
     if (started) return;
     started = true;
-    root.classList.remove('is-loading');
     body.classList.add('is-ready');
     heroPaint && heroPaint.start();
   }
-  if (pre && !reduce) {
-    root.classList.add('is-loading');
-    let seen = false;
-    try { seen = sessionStorage.getItem('hp-seen') === '1'; } catch (e) { /* storage blocked */ }
-    buildDrips($('.drips--pre'), { seed: 3, base: 4, count: 14, minW: 14, maxW: 34, minL: 30, maxL: 130 });
-    const t0 = performance.now();
-    const minTime = seen ? 300 : 1350;
-    let out = false;
-    const go = () => {
-      if (out) return;
-      out = true;
-      setTimeout(() => {
-        pre.classList.add('is-out');
-        setTimeout(ready, 420);
-        setTimeout(() => pre.classList.add('is-gone'), 1400);
-        try { sessionStorage.setItem('hp-seen', '1'); } catch (e) { /* ignore */ }
-      }, Math.max(0, minTime - (performance.now() - t0)));
-    };
-    if (document.readyState === 'complete') go();
-    else addEventListener('load', go, { once: true });
-    setTimeout(go, 3200);
-  } else {
-    if (pre) pre.classList.add('is-gone');
-    ready();
-  }
+  const fontsReady = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
+  Promise.race([fontsReady, new Promise(r => setTimeout(r, 800))]).then(ready);
 
   /* ---------------------------------------------------------
-     Header, menu, progress, action bar, active nav
+     Header, menu, action bar, active nav
      --------------------------------------------------------- */
   const header = $('.header');
   const burger = $('.burger');
@@ -382,8 +353,6 @@
   const measurePanels = () => panels.forEach(p => p.style.setProperty('--bh', `${$('.svc-body', p).offsetHeight}px`));
   const openPanel = p => {
     panels.forEach(x => x.classList.toggle('is-open', x === p));
-    const c = $('.cursor');
-    if (c) c.classList.remove('is-label');
   };
   let hoverT = 0;
   panels.forEach(p => {
@@ -468,7 +437,6 @@
       const i = sws.findIndex(s => s.getAttribute('aria-checked') === 'true');
       select(sws[(i + 1) % sws.length]);
     });
-    $('.lab-stage').setAttribute('data-cursor', 'Repaint');
 
     $$('.tt').forEach(b => b.addEventListener('click', () => {
       $$('.tt').forEach(x => { x.classList.toggle('is-on', x === b); x.setAttribute('aria-pressed', String(x === b)); });
@@ -632,60 +600,9 @@
   $('.form-again', form).addEventListener('click', () => { done.hidden = true; });
 
   /* ---------------------------------------------------------
-     Cursor + magnetic buttons (fine pointers only)
-     --------------------------------------------------------- */
-  const cursor = $('.cursor');
-  const cDot = $('.cursor-dot'), cRing = $('.cursor-ring'), cLabel = $('.cursor-label');
-  let mx = -100, my = -100, rx = -100, ry = -100;
-  const useCursor = fine && !reduce && cursor;
-  if (useCursor) {
-    addEventListener('pointermove', e => {
-      mx = e.clientX; my = e.clientY;
-      cDot.style.transform = `translate3d(${mx}px, ${my}px, 0)`;
-      cursor.classList.remove('is-hidden');
-    }, { passive: true });
-    document.addEventListener('pointerleave', () => cursor.classList.add('is-hidden'));
-    document.addEventListener('pointerover', e => {
-      const t = e.target;
-      let lab = t.closest('[data-cursor]');
-      if (lab && lab.classList.contains('svc') && (lab.classList.contains('is-open') || t.closest('a'))) lab = null;
-      const link = t.closest('a, button, label, input, select, textarea');
-      cursor.classList.toggle('is-label', !!lab);
-      cLabel.textContent = lab ? lab.dataset.cursor : '';
-      cursor.classList.toggle('is-link', !lab && !!link);
-      cursor.classList.toggle('is-paint', !lab && !link && !!t.closest('.hero'));
-    });
-
-    $$('[data-magnetic]').forEach(el => {
-      el.addEventListener('pointermove', e => {
-        const r = el.getBoundingClientRect();
-        const x = (e.clientX - r.left - r.width / 2) * 0.28;
-        const y = (e.clientY - r.top - r.height / 2) * 0.38;
-        el.style.transform = `translate(${x}px, ${y}px)`;
-      });
-      el.addEventListener('pointerleave', () => {
-        el.style.transition = 'transform .6s cubic-bezier(.34,1.56,.64,1), color .35s, box-shadow .35s';
-        el.style.transform = '';
-        setTimeout(() => { el.style.transition = ''; }, 600);
-      });
-    });
-  }
-
-  /* hero card parallax */
-  const cards = $$('.hero-art [data-depth]');
-  let pmx = 0, pmy = 0, smx = 0, smy = 0;
-  if (fine && !reduce) {
-    $('.hero').addEventListener('pointermove', e => {
-      pmx = e.clientX / vw - 0.5;
-      pmy = e.clientY / vh - 0.5;
-    }, { passive: true });
-  }
-
-  /* ---------------------------------------------------------
      Main loop
      --------------------------------------------------------- */
-  let sy = scrollY, lastSy = sy, vel = 0, dir = 1, lastT = performance.now(), lastHeaderY = sy;
-  const progress = $('.progress');
+  let sy = scrollY, lastT = performance.now(), lastHeaderY = sy;
   const heroEl = $('.hero');
 
   function loop(now) {
@@ -693,50 +610,24 @@
     const dt = Math.min(0.05, (now - lastT) / 1000 || 0.016);
     lastT = now;
     sy = scrollY;
-    const dy = sy - lastSy;
-    lastSy = sy;
-    if (dy) dir = dy > 0 ? 1 : -1;
-    vel = lerp(vel, dy / dt, 0.12);
 
-    // header + progress + action bar
+    // header + action bar
     header.classList.toggle('is-scrolled', sy > 30);
     if (Math.abs(sy - lastHeaderY) > 8) {
       header.classList.toggle('is-hidden', sy > lastHeaderY && sy > 700 && !body.classList.contains('menu-open'));
       lastHeaderY = sy;
     }
-    const docH = root.scrollHeight - vh;
-    progress.style.setProperty('--p', docH > 0 ? (sy / docH).toFixed(4) : 0);
     body.classList.toggle('show-bar', sy > heroEl.offsetHeight * 0.6);
-
-    // cursor ring
-    if (useCursor) {
-      rx = lerp(rx, mx, 0.2); ry = lerp(ry, my, 0.2);
-      cRing.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
-    }
-
-    // hero cards
-    if (!reduce && sy < vh * 1.2) {
-      smx = lerp(smx, pmx, 0.06); smy = lerp(smy, pmy, 0.06);
-      const t = now / 1000;
-      cards.forEach((c, i) => {
-        const d = parseFloat(c.dataset.depth);
-        const x = smx * d * -28;
-        const y = smy * d * -22 + Math.sin(t * 0.9 + i * 1.7) * 6 - sy * d * 0.07;
-        c.style.transform = `translate3d(${x.toFixed(2)}px, ${y.toFixed(2)}px, 0) rotate(var(--r, 0deg))`;
-      });
-    }
 
     // marquee
     if (!reduce) {
-      const boost = Math.min(Math.abs(vel) * 0.25, 900);
-      const skew = clamp(-vel * 0.004, -7, 7);
       mqs.forEach(m => {
-        m.x -= m.speed * dir * (70 + boost) * dt;
+        m.x -= m.speed * 40 * dt;
         if (m.w) {
           if (m.x <= -m.w) m.x += m.w;
           if (m.x > 0) m.x -= m.w;
         }
-        m.tr.style.transform = `translate3d(${m.x.toFixed(2)}px,0,0) skewX(${skew.toFixed(2)}deg)`;
+        m.tr.style.transform = `translate3d(${m.x.toFixed(2)}px,0,0)`;
       });
     }
 
